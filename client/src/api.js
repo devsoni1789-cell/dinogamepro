@@ -1,10 +1,20 @@
-export async function analyzePhoto(imageBase64, mediaType) {
-  const res = await fetch('/api/analyze', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({imageBase64, mediaType}) })
-  if (!res.ok) throw new Error((await res.json().catch(()=>({}))).error || 'Analysis failed')
-  return res.json()
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "https://dinogamepro-backend-production.up.railway.app";
+
+async function request(path, body) {
+  const res = await fetch(API_BASE + path, {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify(body)
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Request failed");
+  return data;
 }
-export async function generateOutfits(profile, occasion, another=false) {
-  const res = await fetch('/api/outfits', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({profile,occasion,another}) })
-  if (!res.ok) throw new Error((await res.json().catch(()=>({}))).error || 'Outfit generation failed')
-  return res.json()
+
+export function analyzePhoto(imageBase64, mediaType) {
+  return request("/api/analyze", {imageBase64, mediaType});
+}
+
+export function generateOutfits(profile, occasion, another=false) {
+  return request("/api/outfits", {profile, occasion, another});
 }
