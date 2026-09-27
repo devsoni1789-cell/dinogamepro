@@ -6,48 +6,56 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "12mb" }));
 
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-const MODEL = "claude-sonnet-4-6";
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const MODEL = process.env.OPENAI_MODEL || "gpt-5.6-luna";
 
-if (!ANTHROPIC_API_KEY) console.warn("\n⚠️ ANTHROPIC_API_KEY is not set. Copy server/.env.example to server/.env and add your key.\n");
+if (!OPENAI_API_KEY) console.warn("\n⚠️ OPENAI_API_KEY is not set. Add it in Railway Variables.\n");
 
-function stripFences(text) {
-  return text.replace(/\`\`\`json/gi, "").replace(/\`\`\`/g, "").trim();
+function cleanJson(text) {
+  return text.replace(/```json/gi, "").replace(/```/g, "").trim();
 }
 
-async function callClaude(content, maxTokens = 1000) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+async function callOpenAI(input, maxOutputTokens = 1200) {
+  if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not configured");
+  const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
-    body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, messages: [{ role: "user", content }] }),
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer " + OPENAI_API_KEY
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      input,
+      max_output_tokens: maxOutputTokens
+    })
   });
-  if (!res.ok) throw new Error("Anthropic API " + res.status + ": " + await res.text());
-  const data = await res.json();
-  return data.content.map((b) => (b.type === "text" ? b.text : "")).filter(Boolean).join("\n");
+  const data = await response.json();
+  if (!response.ok) throw new Error("OpenAI API " + response.status + ": " + JSON.stringify(data));
+  return data.output_text || data.output?.flatMap(x => x.content || []).map(x => x.text || "").filter(Boolean).join("\n") || "";
 }
 
 const ANALYSIS_INSTRUCTIONS = `You are a professional fashion stylist looking at one photo a client uploaded of themselves.
 
-Analyze ONLY styling-relevant visual traits: face shape, hair length/texture/style, skin-tone-compatible color palette, apparent build/proportions in purely visual-styling terms (e.g. "average build, balanced proportions" — nothing clinical), and their current visual style (colors, fit, formality they already gravitate to).
+Analyze ONLY styling-relevant visible traits: face shape, hair length/texture/style, skin-tone-compatible color palette, apparent build/proportions in purely visual-styling terms, and current visual style.
 
 Strict rules:
-- Never infer or mention age, weight, health, ethnicity, or any medical/biometric detail.
-- Never say anything that could read as a judgment about the person's appearance.
+- Never infer or mention age, weight, health, ethnicity, race, or medical/biometric details.
+- Never judge attractiveness or make negative appearance judgments.
 - Use warm, practical, confidence-building language.
-- If the photo is unclear, low quality, or doesn't clearly show a person, set "usable" to false and explain briefly in "note".
+- If the photo is unclear, low quality, or doesn't clearly show a person, set "usable" to false and explain briefly.
 
-Respond with ONLY compact JSON, no markdown fences, matching exactly this shape:
+Respond with ONLY compact JSON:
 {
   "usable": true,
   "note": "",
   "faceShape": "e.g. oval",
   "faceShapeConfidence": 0.8,
   "hairstyle": "short description of current hair",
-  "proportions": "short visual-styling description, e.g. balanced shoulders and torso-leg ratio",
+  "proportions": "short visual-styling description",
   "skinToneUndertone": "warm | cool | neutral",
   "bestColors": ["navy","olive","cream","burgundy","charcoal"],
-  "existingStyle": "one short phrase, e.g. relaxed smart-casual",
-  "summary": "2-3 sentence warm, specific summary a stylist would say to this client"
+  "existingStyle": "one short phrase",
+  "summary": "2-3 sentence warm, specific stylist summary"
 }`;
 
 function occasionInstructions(profile, occasion, another) {
@@ -56,14 +64,14 @@ ${JSON.stringify(profile)}
 
 They want outfit ideas for this occasion: "${occasion}".
 
-Generate exactly 3 distinct, complete outfits using ONLY items from this category list: t-shirt, shirt, trousers, jeans, cargo pants, jacket, shoes, watch, sunglasses/glasses, and one other accessory (belt, cap, bag, bracelet, or similar).
-Not every category needs to appear in every outfit — pick what fits the occasion and the client's profile, but each outfit needs at minimum a top, a bottom, and shoes.
+Generate exactly 3 distinct, complete outfits using these categories: t-shirt, shirt, trousers, jeans, cargo pants, jacket, shoes, watch, sunglasses/glasses, and one other accessory.
+Each outfit needs at minimum a top, bottom, and shoes.
 
-Ground every "why" explanation in specifics from their profile (face shape, proportions, skin tone/undertone, existing style) and the occasion — never generic. Keep each "why" to 1-2 sentences, plain and specific, no clichés.
+Ground every "why" explanation in specifics from the profile and occasion. Keep each "why" to 1-2 sentences.
 
-Also suggest one hairstyle direction, one eyewear direction, and one accessory approach that suits their profile overall (not per-outfit).
+Also suggest one hairstyle direction, one eyewear direction, and one accessory approach.
 
-Respond with ONLY compact JSON, no markdown fences, matching exactly this shape:
+Respond with ONLY compact JSON:
 {
   "outfits": [
     {
@@ -77,8 +85,8 @@ Respond with ONLY compact JSON, no markdown fences, matching exactly this shape:
   "eyewearSuggestion": "",
   "accessorySuggestion": ""
 }
-Omit any item key that doesn't apply to a given outfit rather than leaving it empty.`;
-  if (another) prompt += "\n\nThe client has seen outfit ideas before — generate 3 genuinely different looks this time, same rules.";
+Omit item keys that don't apply.`;
+  if (another) prompt += "\nGenerate 3 genuinely different looks from previous suggestions.";
   return prompt;
 }
 
@@ -86,15 +94,19 @@ app.post("/api/analyze", async (req, res) => {
   try {
     const { imageBase64, mediaType } = req.body;
     if (!imageBase64 || !mediaType) return res.status(400).json({ error: "imageBase64 and mediaType are required" });
-    const content = [
-      { type: "image", source: { type: "base64", media_type: mediaType, data: imageBase64 } },
-      { type: "text", text: ANALYSIS_INSTRUCTIONS },
-    ];
-    const parsed = JSON.parse(stripFences(await callClaude(content, 1000)));
+    const imageUrl = `data:${mediaType};base64,${imageBase64}`;
+    const input = [{
+      role: "user",
+      content: [
+        { type: "input_image", image_url: imageUrl, detail: "high" },
+        { type: "input_text", text: ANALYSIS_INSTRUCTIONS }
+      ]
+    }];
+    const parsed = JSON.parse(cleanJson(await callOpenAI(input, 1200)));
     res.json(parsed);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to analyze photo. Check server logs and your API key." });
+    res.status(500).json({ error: "Failed to analyze photo. Check the AI API key and server logs." });
   }
 });
 
@@ -102,15 +114,16 @@ app.post("/api/outfits", async (req, res) => {
   try {
     const { profile, occasion, another } = req.body;
     if (!profile || !occasion) return res.status(400).json({ error: "profile and occasion are required" });
-    const parsed = JSON.parse(stripFences(await callClaude([{ type: "text", text: occasionInstructions(profile, occasion, Boolean(another)) }], 1000)));
+    const input = [{ role: "user", content: [{ type: "input_text", text: occasionInstructions(profile, occasion, Boolean(another)) }] }];
+    const parsed = JSON.parse(cleanJson(await callOpenAI(input, 1400)));
     res.json(parsed);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to generate outfits. Check server logs and your API key." });
+    res.status(500).json({ error: "Failed to generate outfits. Check the AI API key and server logs." });
   }
 });
 
-app.get("/api/health", (_req, res) => res.json({ ok: true }));
+app.get("/api/health", (_req, res) => res.json({ ok: true, aiConfigured: Boolean(OPENAI_API_KEY), model: MODEL }));
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log("Stylist server running on http://localhost:" + PORT));
+app.listen(PORT, "0.0.0.0", () => console.log("Stylist server running on port " + PORT));
