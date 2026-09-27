@@ -1,0 +1,26 @@
+name: Validate AI Stylist
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install and build client
+        working-directory: client
+        run: npm install && npm run build
+      - name: Install server
+        working-directory: server
+        run: npm install
+      - name: Server syntax check
+        working-directory: server
+        run: node --check index.js
