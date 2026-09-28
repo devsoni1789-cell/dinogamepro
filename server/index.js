@@ -6,7 +6,7 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: "12mb" }));
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env["Gemini API Key"];
 const MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash-lite";
 
 if (!GEMINI_API_KEY) console.warn("\n⚠️ GEMINI_API_KEY is not set. Add it in Railway Variables.\n");
