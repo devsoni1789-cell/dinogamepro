@@ -1,18 +1,21 @@
-// AI stylist backend\nimport express from "express";
-import cors from "cors";
-import "dotenv/config";
+const express = require("express");
+const cors = require("cors");
+require("dotenv").config();
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "12mb" }));
+app.use(express.json({ limit: "25mb" }));
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env["Gemini API Key"];
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
+const IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image";
 
-if (!GEMINI_API_KEY) console.warn("\n⚠️ GEMINI_API_KEY is not set. Add it in Railway Variables.\n");
+if (!GEMINI_API_KEY) {
+  console.warn("GEMINI_API_KEY is not set. Add it in Railway Variables.");
+}
 
 function cleanJson(text) {
-  return String(text || "").replace(/\`\`\`json/gi, "").replace(/\`\`\`/g, "").trim();
+  return String(text || "").replace(/```json/gi, "").replace(/```/g, "").trim();
 }
 
 async function callGemini(contents, maxOutputTokens = 1200) {
@@ -29,7 +32,7 @@ async function callGemini(contents, maxOutputTokens = 1200) {
       body: JSON.stringify({
         contents,
         generationConfig: {
-          maxOutputTokens: maxOutputTokens,
+          maxOutputTokens,
           responseMimeType: "application/json"
         }
       })
@@ -148,21 +151,26 @@ app.post("/api/outfits", async (req, res) => {
   }
 });
 
-app.get("/api/health", (_req, res) =>
-  res.json({ ok: true, aiConfigured: Boolean(GEMINI_API_KEY), provider: "Google Gemini", model: MODEL })
-);
-
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, "0.0.0.0", () => console.log("Stylist server running on port " + PORT));
-
-
-const IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image";
-
 app.post("/api/try-on", async (req, res) => {
   try {
-    const { imageBase64, mediaType, outfit, occasion, hairstyle, eyewear, accessory } = req.body;
+    const {
+      imageBase64,
+      mediaType,
+      outfit,
+      occasion,
+      hairstyle,
+      eyewear,
+      accessory
+    } = req.body;
+
     if (!imageBase64 || !mediaType || !outfit) {
-      return res.status(400).json({ error: "imageBase64, mediaType and outfit are required" });
+      return res.status(400).json({
+        error: "imageBase64, mediaType and outfit are required"
+      });
+    }
+
+    if (!GEMINI_API_KEY) {
+      return res.status(500).json({ error: "GEMINI_API_KEY is not configured on Railway." });
     }
 
     const outfitText = [
@@ -176,17 +184,18 @@ app.post("/api/try-on", async (req, res) => {
       "Hairstyle: " + (hairstyle || "keep a neat hairstyle that suits the person")
     ].join("\n");
 
-    const prompt = `Create a photorealistic "this is how I would look after getting ready" fashion preview.
+    const prompt = `Create a photorealistic fashion try-on preview using the uploaded person.
 
-Use the uploaded person as the same person. Preserve their facial identity, natural skin appearance, hair characteristics, body proportions, and overall recognizable appearance. Do not create a different person.
+Keep the same recognizable person. Preserve facial identity, natural skin appearance, hair characteristics, body proportions, pose/composition as much as practical, and overall recognizable appearance.
 
-Dress the person in this exact recommended outfit:
+Change the clothing and styling to this exact recommended look:
 ${outfitText}
 
 Occasion: ${occasion || "everyday"}
-Show a realistic full-body or three-quarter-body fashion photo with natural lighting, believable fabric fit, realistic hands, realistic clothing details, and a clean modern background. Apply the recommended hairstyle and accessories naturally.
 
-Do not add text, labels, collages, outfit boards, or before/after panels. This must be a single realistic photo of the person wearing the recommended look.`;
+Make it look like a real fashion photograph: realistic fabric, natural fit, believable hands, realistic accessories, natural lighting, and a clean modern background. Apply the hairstyle and accessories naturally.
+
+Do not add text, labels, collages, outfit boards, or before/after panels. Return one single realistic photo of the person wearing the recommended outfit.`;
 
     const response = await fetch("https://generativelanguage.googleapis.com/v1beta/interactions", {
       method: "POST",
@@ -197,8 +206,15 @@ Do not add text, labels, collages, outfit boards, or before/after panels. This m
       body: JSON.stringify({
         model: IMAGE_MODEL,
         input: [
-          { type: "image", mime_type: mediaType, data: imageBase64 },
-          { type: "text", text: prompt }
+          {
+            type: "image",
+            mime_type: mediaType,
+            data: imageBase64
+          },
+          {
+            type: "text",
+            text: prompt
+          }
         ],
         response_format: {
           type: "image",
@@ -210,6 +226,7 @@ Do not add text, labels, collages, outfit boards, or before/after panels. This m
     });
 
     const data = await response.json();
+
     if (!response.ok) {
       const message = data?.error?.message || JSON.stringify(data);
       throw new Error("Gemini image API " + response.status + ": " + message);
@@ -231,10 +248,33 @@ Do not add text, labels, collages, outfit boards, or before/after panels. This m
       }
     }
 
-    if (!image) throw new Error("Gemini returned no generated image");
-    res.json({ imageBase64: image, mediaType: mime });
+    if (!image) {
+      throw new Error("Gemini returned no generated image");
+    }
+
+    res.json({
+      imageBase64: image,
+      mediaType: mime
+    });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Could not create the outfit preview. Check the Gemini image model/API access and Railway logs." });
+    res.status(500).json({
+      error: err?.message || "Could not create the outfit preview."
+    });
   }
+});
+
+app.get("/api/health", (_req, res) => {
+  res.json({
+    ok: true,
+    aiConfigured: Boolean(GEMINI_API_KEY),
+    provider: "Google Gemini",
+    model: MODEL,
+    imageModel: IMAGE_MODEL
+  });
+});
+
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, "0.0.0.0", () => {
+  console.log("Stylist server running on port " + PORT);
 });
