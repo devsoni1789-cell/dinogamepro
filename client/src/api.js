@@ -18,3 +18,8 @@ export function analyzePhoto(imageBase64, mediaType) {
 export function generateOutfits(profile, occasion, another=false) {
   return request("/api/outfits", {profile, occasion, another});
 }
+
+
+export function generateTryOn(imageBase64, mediaType, outfit, occasion, hairstyle, eyewear, accessory) {
+  return request("/api/try-on", {imageBase64, mediaType, outfit, occasion, hairstyle, eyewear, accessory});
+}
