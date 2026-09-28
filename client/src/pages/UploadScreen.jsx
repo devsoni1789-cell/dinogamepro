@@ -14,6 +14,6 @@ export default function UploadScreen({photoUrl,onFile,onAnalyze,error}) {
     {error&&<p className="text-sm text-red-700 mt-4">{error}</p>}
     <div className="mt-8 mb-8"><p className="text-xs text-stone-400 mb-2">For the best read</p><ul className="space-y-1.5 text-sm text-stone-600"><li>· Stand in natural light, facing the camera</li><li>· Keep the background simple</li><li>· Avoid heavy filters or sunglasses</li></ul></div>
     <PrimaryButton className="w-full" disabled={!photoUrl} onClick={onAnalyze}>Analyze my style</PrimaryButton>
-    <p className="text-[11px] text-stone-400 text-center mt-3">Sent to your own server, which calls Claude with your API key. Nothing is stored.</p>
+    <p className="text-[11px] text-stone-400 text-center mt-3">Sent to your own server, which calls Google Gemini with your API key. Nothing is stored.</p>
   </div>
 }
